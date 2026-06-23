@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import type { ReactNode } from "react";
 import type { SOW, PurchaseOrder, Invoice, AuditLog } from "./types";
 
 function formatCurrency(n: number) {

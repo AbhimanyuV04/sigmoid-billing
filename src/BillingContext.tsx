@@ -40,6 +40,7 @@ interface BillingState {
   addSKUToPO: (poId: string, skuName: string, allocatedBudget: number) => void;
   addInvoice: (input: AddInvoiceInput) => void;
   reclassifyBudget: (input: ReclassifyInput) => void;
+  reclassifyPO: (sourcePoId: string, targetPoId: string) => void;
   previewFIFO: (sowId: string, skuName: string, amount: number) => FIFOStep[];
   deleteSOW: (sowId: string) => void;
   deletePO: (poId: string) => void;
@@ -376,6 +377,49 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     [purchaseOrders, appendAudit],
   );
 
+  const reclassifyPO = useCallback(
+    (sourcePoId: string, targetPoId: string) => {
+      if (sourcePoId === targetPoId) throw new Error("Source and target PO cannot be the same.");
+      const sourcePO = purchaseOrders.find((po) => po.id === sourcePoId);
+      if (!sourcePO) throw new Error(`Source PO "${sourcePoId}" not found`);
+      const targetPO = purchaseOrders.find((po) => po.id === targetPoId);
+      if (!targetPO) throw new Error(`Target PO "${targetPoId}" not found`);
+
+      const transfers: { skuName: string; amount: number }[] = [];
+      for (const li of sourcePO.lineItems) {
+        const avail = li.allocatedBudget - li.consumedBudget;
+        if (avail > 0) transfers.push({ skuName: li.skuName, amount: avail });
+      }
+      if (transfers.length === 0) throw new Error("No available budget to transfer from this PO.");
+
+      let nextLIId = Date.now();
+      setPurchaseOrders((prev) =>
+        prev.map((po) => {
+          if (po.id === sourcePoId) {
+            return { ...po, lineItems: po.lineItems.map((li) => ({ ...li, allocatedBudget: li.consumedBudget })) };
+          }
+          if (po.id === targetPoId) {
+            let items = [...po.lineItems];
+            for (const t of transfers) {
+              const existing = items.find((li) => li.skuName === t.skuName);
+              if (existing) {
+                items = items.map((li) => li.id === existing.id ? { ...li, allocatedBudget: li.allocatedBudget + t.amount } : li);
+              } else {
+                items = [...items, { id: `LI-GEN-${String(nextLIId++).padStart(3, "0")}`, skuName: t.skuName, allocatedBudget: t.amount, consumedBudget: 0 }];
+              }
+            }
+            return { ...po, lineItems: items };
+          }
+          return po;
+        }),
+      );
+
+      const totalMoved = transfers.reduce((s, t) => s + t.amount, 0);
+      appendAudit(`Transferred entire PO budget ($${totalMoved}) from ${sourcePO.poNumber} to ${targetPO.poNumber} — ${transfers.length} SKU(s)`);
+    },
+    [purchaseOrders, appendAudit],
+  );
+
   const previewFIFO = useCallback(
     (sowId: string, skuName: string, amount: number): FIFOStep[] => {
       const matchingPOs = purchaseOrders
@@ -475,7 +519,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <BillingContext.Provider value={{ sows, purchaseOrders, invoices, auditLogs, addSOW, addPO, addSKUToPO, addInvoice, reclassifyBudget, previewFIFO, deleteSOW, deletePO, voidInvoice }}>
+    <BillingContext.Provider value={{ sows, purchaseOrders, invoices, auditLogs, addSOW, addPO, addSKUToPO, addInvoice, reclassifyBudget, reclassifyPO, previewFIFO, deleteSOW, deletePO, voidInvoice }}>
       {children}
     </BillingContext.Provider>
   );

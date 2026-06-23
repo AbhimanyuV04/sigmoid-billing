@@ -470,8 +470,9 @@ function InvoicingView() {
 // ─── View 4: Reclassification Console ─────────────────────────────────
 
 function ReclassifyView() {
-  const { purchaseOrders, reclassifyBudget } = useBilling();
+  const { purchaseOrders, reclassifyBudget, reclassifyPO } = useBilling();
 
+  const [mode, setMode] = useState<"line" | "po">("line");
   const [sourcePoId, setSourcePoId] = useState("");
   const [sourceSkuName, setSourceSkuName] = useState("");
   const [targetPoId, setTargetPoId] = useState("");
@@ -483,6 +484,7 @@ function ReclassifyView() {
   const targetPO = purchaseOrders.find((po) => po.id === targetPoId);
   const sourceLI = sourcePO?.lineItems.find((li) => li.skuName === sourceSkuName);
   const sourceAvailable = sourceLI ? sourceLI.allocatedBudget - sourceLI.consumedBudget : 0;
+  const sourcePOAvailable = sourcePO ? sourcePO.lineItems.reduce((s, li) => s + li.allocatedBudget - li.consumedBudget, 0) : 0;
 
   const allSkuNames = useMemo(() => {
     const s = new Set<string>();
@@ -496,9 +498,14 @@ function ReclassifyView() {
     e.preventDefault();
     setMessage(null);
     try {
-      reclassifyBudget({ sourcePoId, sourceSkuName, targetPoId, targetSkuName, amountToMove: Number(amountToMove) });
-      setMessage({ type: "success", text: `Shifted ${formatCurrency(Number(amountToMove))} from ${sourcePoId} to ${targetPoId}.` });
-      setAmountToMove("");
+      if (mode === "po") {
+        reclassifyPO(sourcePoId, targetPoId);
+        setMessage({ type: "success", text: `Transferred all available budget from ${sourcePO?.poNumber} to ${targetPO?.poNumber}.` });
+      } else {
+        reclassifyBudget({ sourcePoId, sourceSkuName, targetPoId, targetSkuName, amountToMove: Number(amountToMove) });
+        setMessage({ type: "success", text: `Shifted ${formatCurrency(Number(amountToMove))} from ${sourcePoId} to ${targetPoId}.` });
+        setAmountToMove("");
+      }
     } catch (err) {
       setMessage({ type: "error", text: (err as Error).message });
     }
@@ -512,6 +519,11 @@ function ReclassifyView() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 max-w-2xl">
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 mb-5">
+          <button type="button" onClick={() => setMode("line")} className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${mode === "line" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>Line Item</button>
+          <button type="button" onClick={() => setMode("po")} className={`flex-1 text-xs font-medium py-1.5 rounded-md transition-colors ${mode === "po" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>Entire PO</button>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-5">
           <fieldset className="border border-gray-200 rounded-lg p-4 space-y-3">
             <legend className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2">Source</legend>
@@ -521,23 +533,30 @@ function ReclassifyView() {
                 <option value="">Select PO...</option>
                 {purchaseOrders.map((po) => <option key={po.id} value={po.id}>{poLabel(po)}</option>)}
               </select>
+              {mode === "po" && sourcePO && (
+                <p className="text-xs mt-1 text-gray-500">Available to transfer: {formatCurrency(sourcePOAvailable)} across {sourcePO.lineItems.length} SKU(s)</p>
+              )}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Line Item (SKU)</label>
-              <select value={sourceSkuName} onChange={(e) => setSourceSkuName(e.target.value)} className={INPUT} required disabled={!sourcePO}>
-                <option value="">Select SKU...</option>
-                {sourcePO?.lineItems.map((li) => (
-                  <option key={li.id} value={li.skuName}>{li.skuName} — avail: {formatCurrency(li.allocatedBudget - li.consumedBudget)}</option>
-                ))}
-              </select>
-            </div>
+            {mode === "line" && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Line Item (SKU)</label>
+                <select value={sourceSkuName} onChange={(e) => setSourceSkuName(e.target.value)} className={INPUT} required disabled={!sourcePO}>
+                  <option value="">Select SKU...</option>
+                  {sourcePO?.lineItems.map((li) => (
+                    <option key={li.id} value={li.skuName}>{li.skuName} — avail: {formatCurrency(li.allocatedBudget - li.consumedBudget)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </fieldset>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Amount to Transfer</label>
-            <input type="number" value={amountToMove} onChange={(e) => setAmountToMove(e.target.value)} min={1} max={Math.max(sourceAvailable, 0)} className={INPUT} required />
-            {sourceLI && <p className="text-xs mt-1 text-gray-500">Max transferable: {formatCurrency(Math.max(sourceAvailable, 0))}</p>}
-          </div>
+          {mode === "line" && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Amount to Transfer</label>
+              <input type="number" value={amountToMove} onChange={(e) => setAmountToMove(e.target.value)} min={1} max={Math.max(sourceAvailable, 0)} className={INPUT} required />
+              {sourceLI && <p className="text-xs mt-1 text-gray-500">Max transferable: {formatCurrency(Math.max(sourceAvailable, 0))}</p>}
+            </div>
+          )}
 
           <fieldset className="border border-gray-200 rounded-lg p-4 space-y-3">
             <legend className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2">Target</legend>
@@ -545,19 +564,21 @@ function ReclassifyView() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Purchase Order</label>
               <select value={targetPoId} onChange={(e) => setTargetPoId(e.target.value)} className={INPUT} required>
                 <option value="">Select PO...</option>
-                {purchaseOrders.map((po) => <option key={po.id} value={po.id}>{poLabel(po)}</option>)}
+                {purchaseOrders.filter((po) => po.id !== sourcePoId).map((po) => <option key={po.id} value={po.id}>{poLabel(po)}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Target SKU Name</label>
-              <select value={targetSkuName} onChange={(e) => setTargetSkuName(e.target.value)} className={INPUT} required>
-                <option value="">Select or match SKU...</option>
-                {allSkuNames.map((sku) => <option key={sku} value={sku}>{sku}{targetPO?.lineItems.some((li) => li.skuName === sku) ? " (exists)" : " (new)"}</option>)}
-              </select>
-            </div>
+            {mode === "line" && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Target SKU Name</label>
+                <select value={targetSkuName} onChange={(e) => setTargetSkuName(e.target.value)} className={INPUT} required>
+                  <option value="">Select or match SKU...</option>
+                  {allSkuNames.map((sku) => <option key={sku} value={sku}>{sku}{targetPO?.lineItems.some((li) => li.skuName === sku) ? " (exists)" : " (new)"}</option>)}
+                </select>
+              </div>
+            )}
           </fieldset>
 
-          <button type="submit" className={BTN_AMBER}>Reclassify Budget</button>
+          <button type="submit" className={BTN_AMBER}>{mode === "po" ? "Transfer Entire PO" : "Reclassify Budget"}</button>
           {message && <StatusBanner message={message} />}
         </form>
       </div>
@@ -647,9 +668,9 @@ function ReportsView() {
                   <div className="flex-1 h-5 bg-gray-100 rounded-full overflow-hidden relative">
                     <div className="absolute inset-y-0 left-0 bg-indigo-100 rounded-full" style={{ width: `${pct}%` }} />
                     <div className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full" style={{ width: `${pct * invPct / 100}%` }} />
-                    <span className="absolute inset-0 flex items-center px-2 text-[10px] font-semibold text-gray-600">{formatCurrency(c.totalAllocated)}</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 w-14 text-right">{invPct.toFixed(0)}% burned</span>
+                  <span className="text-xs font-mono font-semibold text-gray-700 w-20 text-right">{formatCurrency(c.totalAllocated)}</span>
+                  <span className="text-[10px] text-gray-400 w-16 text-right">{invPct.toFixed(0)}% burned</span>
                 </div>
               );
             })}

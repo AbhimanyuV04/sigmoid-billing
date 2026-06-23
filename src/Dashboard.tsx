@@ -33,6 +33,19 @@ function TrashIcon({ className = "w-4 h-4" }: { className?: string }) {
   );
 }
 
+function ConfirmAction({ onConfirm, label, children }: { onConfirm: () => void; label: string; children: React.ReactNode }) {
+  const [pending, setPending] = useState(false);
+  if (pending) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <button onClick={(e) => { e.stopPropagation(); onConfirm(); setPending(false); }} className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded hover:bg-red-100 transition-colors">{label}</button>
+        <button onClick={(e) => { e.stopPropagation(); setPending(false); }} className="text-[11px] text-gray-400 hover:text-gray-600 px-1">Cancel</button>
+      </span>
+    );
+  }
+  return <span onClick={(e) => { e.stopPropagation(); setPending(true); }}>{children}</span>;
+}
+
 function StatusBanner({ message }: { message: { type: "success" | "error"; text: string } }) {
   return (
     <div className={`text-sm rounded-md px-3 py-2 ${message.type === "success" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
@@ -74,11 +87,9 @@ function ExplorerView() {
                 {sow.projectIds.map((pid) => (
                   <span key={pid} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-mono">{pid}</span>
                 ))}
-                <button
-                  onClick={(e) => { e.stopPropagation(); if (!confirm(`Delete SOW "${sow.name}" and all linked POs?`)) return; try { deleteSOW(sow.id); setMessage({ type: "success", text: `Deleted SOW "${sow.name}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
-                  className={BTN_DANGER_SM}
-                  title="Delete SOW"
-                ><TrashIcon /></button>
+                <ConfirmAction label="Delete SOW?" onConfirm={() => { try { deleteSOW(sow.id); setMessage({ type: "success", text: `Deleted SOW "${sow.name}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}>
+                  <button className={BTN_DANGER_SM} title="Delete SOW"><TrashIcon /></button>
+                </ConfirmAction>
                 <svg className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
@@ -103,11 +114,9 @@ function ExplorerView() {
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-400">{po.createdAt}</span>
                           <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{po.lineItems.length} SKU{po.lineItems.length !== 1 ? "s" : ""}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); if (!confirm(`Delete PO "${po.poNumber}"?`)) return; try { deletePO(po.id); setMessage({ type: "success", text: `Deleted PO "${po.poNumber}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
-                            className={BTN_DANGER_SM}
-                            title="Delete PO"
-                          ><TrashIcon /></button>
+                          <ConfirmAction label="Delete PO?" onConfirm={() => { try { deletePO(po.id); setMessage({ type: "success", text: `Deleted PO "${po.poNumber}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}>
+                            <button className={BTN_DANGER_SM} title="Delete PO"><TrashIcon /></button>
+                          </ConfirmAction>
                         </div>
                       </button>
                       {poOpen && (
@@ -442,7 +451,9 @@ function InvoicingView() {
                       <td className="py-2.5 px-3 text-right font-mono text-emerald-600">{formatCurrency(inv.amount)}</td>
                       <td className="py-2.5 px-3 text-right text-gray-400 text-xs">{inv.date}</td>
                       <td className="py-2.5 pl-3 text-right">
-                        <button onClick={() => { if (!confirm(`Void invoice ${inv.invoiceNumber} (${formatCurrency(inv.amount)})? Budget will be returned to the source POs.`)) return; try { voidInvoice(inv.id); setMessage({ type: "success", text: `Voided ${inv.invoiceNumber} — budget returned.` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }} className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors">Void</button>
+                        <ConfirmAction label="Void?" onConfirm={() => { try { voidInvoice(inv.id); setMessage({ type: "success", text: `Voided ${inv.invoiceNumber} — budget returned.` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}>
+                          <button className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors">Void</button>
+                        </ConfirmAction>
                       </td>
                     </tr>
                   ))}

@@ -23,7 +23,15 @@ function formatTimestamp(iso: string) {
 const INPUT = "w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none";
 const BTN_PRIMARY = "w-full bg-indigo-600 text-white text-sm font-medium py-2.5 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors";
 const BTN_AMBER = "w-full bg-amber-600 text-white text-sm font-medium py-2.5 rounded-md hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors";
-const BTN_DANGER_SM = "text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors";
+const BTN_DANGER_SM = "text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition-colors";
+
+function TrashIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+    </svg>
+  );
+}
 
 function StatusBanner({ message }: { message: { type: "success" | "error"; text: string } }) {
   return (
@@ -67,10 +75,10 @@ function ExplorerView() {
                   <span key={pid} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-mono">{pid}</span>
                 ))}
                 <button
-                  onClick={(e) => { e.stopPropagation(); try { deleteSOW(sow.id); setMessage({ type: "success", text: `Deleted SOW "${sow.name}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
+                  onClick={(e) => { e.stopPropagation(); if (!confirm(`Delete SOW "${sow.name}" and all linked POs?`)) return; try { deleteSOW(sow.id); setMessage({ type: "success", text: `Deleted SOW "${sow.name}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
                   className={BTN_DANGER_SM}
                   title="Delete SOW"
-                >Delete</button>
+                ><TrashIcon /></button>
                 <svg className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
@@ -96,10 +104,10 @@ function ExplorerView() {
                           <span className="text-xs text-gray-400">{po.createdAt}</span>
                           <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{po.lineItems.length} SKU{po.lineItems.length !== 1 ? "s" : ""}</span>
                           <button
-                            onClick={(e) => { e.stopPropagation(); try { deletePO(po.id); setMessage({ type: "success", text: `Deleted PO "${po.poNumber}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
+                            onClick={(e) => { e.stopPropagation(); if (!confirm(`Delete PO "${po.poNumber}"?`)) return; try { deletePO(po.id); setMessage({ type: "success", text: `Deleted PO "${po.poNumber}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
                             className={BTN_DANGER_SM}
                             title="Delete PO"
-                          >Delete</button>
+                          ><TrashIcon /></button>
                         </div>
                       </button>
                       {poOpen && (
@@ -330,7 +338,7 @@ function InvoicingView() {
     setMessage(null);
     try {
       addInvoice({ sowId, projectId, skuName, amount: Number(amount), invoiceNumber });
-      setMessage({ type: "success", text: `Invoice ${invoiceNumber} submitted — ${formatCurrency(Number(amount))} allocated via FIFO.` });
+      setMessage({ type: "success", text: `Invoice ${invoiceNumber} submitted — ${formatCurrency(Number(amount))} allocated across POs.` });
       setAmount(""); setInvoiceNumber("");
     } catch (err) {
       setMessage({ type: "error", text: (err as Error).message });
@@ -341,7 +349,7 @@ function InvoicingView() {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-gray-900">Invoicing Terminal</h2>
-        <p className="text-sm text-gray-500 mt-1">Generate invoices with automatic FIFO budget allocation and overbill protection.</p>
+        <p className="text-sm text-gray-500 mt-1">Generate invoices with automatic budget allocation and overbill protection.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -371,7 +379,7 @@ function InvoicingView() {
               </select>
               {aggregateRemaining !== null && (
                 <div className={`mt-2 text-sm font-medium px-3 py-2 rounded-md ${maxAmount <= 0 ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
-                  Available FIFO Budget: {formatCurrency(maxAmount)}
+                  Available Budget: {formatCurrency(maxAmount)}
                 </div>
               )}
             </div>
@@ -385,7 +393,7 @@ function InvoicingView() {
             </div>
             {fifoPreview.length > 0 && (
               <div className="border border-indigo-200 bg-indigo-50/50 rounded-lg p-3 space-y-2">
-                <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">FIFO Allocation Preview</p>
+                <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Allocation Preview</p>
                 {fifoPreview.map((step, i) => (
                   <div key={i} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
@@ -434,7 +442,7 @@ function InvoicingView() {
                       <td className="py-2.5 px-3 text-right font-mono text-emerald-600">{formatCurrency(inv.amount)}</td>
                       <td className="py-2.5 px-3 text-right text-gray-400 text-xs">{inv.date}</td>
                       <td className="py-2.5 pl-3 text-right">
-                        <button onClick={() => { try { voidInvoice(inv.id); setMessage({ type: "success", text: `Voided ${inv.invoiceNumber} — budget returned.` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }} className={BTN_DANGER_SM}>Void</button>
+                        <button onClick={() => { if (!confirm(`Void invoice ${inv.invoiceNumber} (${formatCurrency(inv.amount)})? Budget will be returned to the source POs.`)) return; try { voidInvoice(inv.id); setMessage({ type: "success", text: `Voided ${inv.invoiceNumber} — budget returned.` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }} className="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors">Void</button>
                       </td>
                     </tr>
                   ))}
@@ -645,7 +653,7 @@ function ReportsView() {
                 {/* Stacked bar */}
                 <div className="px-6 pb-2">
                   <div className="flex items-center gap-3 text-[11px] text-gray-500 mb-1">
-                    <span>PO Capacity vs FIFO Consumed</span>
+                    <span>PO Capacity vs Consumed</span>
                     <span className="ml-auto font-mono">{formatCurrency(sow.totalConsumed)} / {formatCurrency(sow.totalAllocated)}</span>
                   </div>
                   <div className="w-full bg-gray-100 rounded-full h-4 relative overflow-hidden">
@@ -657,7 +665,7 @@ function ReportsView() {
                   </div>
                   <div className="flex gap-4 mt-1 text-[10px] text-gray-400">
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" /> Invoiced</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-200 inline-block" /> FIFO Consumed</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-200 inline-block" /> Consumed</span>
                     <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-100 inline-block border border-gray-300" /> Remaining</span>
                   </div>
                 </div>

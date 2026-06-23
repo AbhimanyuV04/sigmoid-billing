@@ -299,7 +299,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
       setInvoices((prev) => [...prev, newInvoice]);
 
       // 6. Audit log
-      appendAudit(`Invoice ${invoiceNumber} recorded: ${formatCurrency(amount)} for SKU "${skuName}" under ${sowId} (FIFO allocated)`);
+      appendAudit(`Invoice ${invoiceNumber} recorded: ${formatCurrency(amount)} for SKU "${skuName}" under ${sowId}`);
     },
     [purchaseOrders, appendAudit],
   );
@@ -468,7 +468,7 @@ export function BillingProvider({ children }: { children: ReactNode }) {
       );
 
       setInvoices((prev) => prev.filter((inv) => inv.id !== invoiceId));
-      appendAudit(`Voided invoice ${invoice.invoiceNumber} (${formatCurrency(invoice.amount)}) — FIFO consumption reversed for SKU "${invoice.skuName}" under ${invoice.sowId}`);
+      appendAudit(`Voided invoice ${invoice.invoiceNumber} (${formatCurrency(invoice.amount)}) — budget returned for SKU "${invoice.skuName}" under ${invoice.sowId}`);
     },
     [invoices, purchaseOrders, appendAudit],
   );

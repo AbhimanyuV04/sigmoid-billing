@@ -567,7 +567,7 @@ function ReclassifyView() {
 
 // ─── View 5: Reports ──────────────────────────────────────────────────
 
-interface ClientReport { clientId: string; clientName: string; sowBreakdowns: SowBreakdown[]; totalAllocated: number; totalInvoiced: number; totalUnbilled: number; }
+interface ClientReport { clientId: string; clientName: string; sowBreakdowns: SowBreakdown[]; totalAllocated: number; totalConsumed: number; totalInvoiced: number; totalUnbilled: number; }
 interface SowBreakdown { sowId: string; sowName: string; projectIds: string[]; poRows: PoRow[]; totalAllocated: number; totalConsumed: number; totalInvoiced: number; }
 interface PoRow { poNumber: string; poId: string; allocated: number; consumed: number; invoiced: number; variance: number; }
 
@@ -577,7 +577,7 @@ function useClientReports(): ClientReport[] {
     const clientMap = new Map<string, ClientReport>();
     for (const sow of sows) {
       if (!clientMap.has(sow.clientId)) {
-        clientMap.set(sow.clientId, { clientId: sow.clientId, clientName: sow.clientName, sowBreakdowns: [], totalAllocated: 0, totalInvoiced: 0, totalUnbilled: 0 });
+        clientMap.set(sow.clientId, { clientId: sow.clientId, clientName: sow.clientName, sowBreakdowns: [], totalAllocated: 0, totalConsumed: 0, totalInvoiced: 0, totalUnbilled: 0 });
       }
       const client = clientMap.get(sow.clientId)!;
       const sowPOs = purchaseOrders.filter((po) => po.sowId === sow.id);
@@ -596,6 +596,7 @@ function useClientReports(): ClientReport[] {
       const sowTotalConsumed = poRows.reduce((s, r) => s + r.consumed, 0);
       client.sowBreakdowns.push({ sowId: sow.id, sowName: sow.name, projectIds: sow.projectIds, poRows, totalAllocated: sowTotalAllocated, totalConsumed: sowTotalConsumed, totalInvoiced: sowTotalInvoiced });
       client.totalAllocated += sowTotalAllocated;
+      client.totalConsumed += sowTotalConsumed;
       client.totalInvoiced += sowTotalInvoiced;
       client.totalUnbilled += sowTotalAllocated - sowTotalConsumed;
     }
@@ -632,15 +633,59 @@ function ReportsView() {
         </div>
       </div>
 
+      {/* Client budget comparison */}
+      {reports.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Budget by Client</p>
+          <div className="space-y-2.5">
+            {reports.map((c) => {
+              const pct = totAlloc > 0 ? (c.totalAllocated / totAlloc) * 100 : 0;
+              const invPct = c.totalAllocated > 0 ? (c.totalInvoiced / c.totalAllocated) * 100 : 0;
+              return (
+                <div key={c.clientId} className="flex items-center gap-3">
+                  <span className="text-xs text-gray-700 font-medium w-28 truncate">{c.clientName}</span>
+                  <div className="flex-1 h-5 bg-gray-100 rounded-full overflow-hidden relative">
+                    <div className="absolute inset-y-0 left-0 bg-indigo-100 rounded-full" style={{ width: `${pct}%` }} />
+                    <div className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full" style={{ width: `${pct * invPct / 100}%` }} />
+                    <span className="absolute inset-0 flex items-center px-2 text-[10px] font-semibold text-gray-600">{formatCurrency(c.totalAllocated)}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 w-14 text-right">{invPct.toFixed(0)}% burned</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-4 mt-2.5 text-[10px] text-gray-400">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" /> Invoiced</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-100 inline-block border border-indigo-200" /> Allocated</span>
+          </div>
+        </div>
+      )}
+
       {/* Per-client */}
       {reports.map((client) => (
         <div key={client.clientId} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">{client.clientName}</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {client.sowBreakdowns.length} SOW{client.sowBreakdowns.length !== 1 ? "s" : ""} &middot; Burn Rate: {client.totalAllocated > 0 ? ((client.totalInvoiced / client.totalAllocated) * 100).toFixed(1) : "0"}%
-              </p>
+            <div className="flex items-center gap-4">
+              {(() => {
+                const size = 48, r = 18, c = 2 * Math.PI * r;
+                const invPct = client.totalAllocated > 0 ? client.totalInvoiced / client.totalAllocated : 0;
+                const conPct = client.totalAllocated > 0 ? (client.totalConsumed - client.totalInvoiced) / client.totalAllocated : 0;
+                return (
+                  <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="flex-shrink-0 -rotate-90">
+                    <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth="6" />
+                    <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#a5b4fc" strokeWidth="6"
+                      strokeDasharray={`${c * (invPct + Math.max(conPct, 0))} ${c}`} strokeLinecap="round" />
+                    <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#6366f1" strokeWidth="6"
+                      strokeDasharray={`${c * invPct} ${c}`} strokeLinecap="round" />
+                  </svg>
+                );
+              })()}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">{client.clientName}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {client.sowBreakdowns.length} SOW{client.sowBreakdowns.length !== 1 ? "s" : ""} &middot; Burn Rate: {client.totalAllocated > 0 ? ((client.totalInvoiced / client.totalAllocated) * 100).toFixed(1) : "0"}%
+                </p>
+              </div>
             </div>
             <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full">Unbilled: {formatCurrency(client.totalUnbilled)}</span>
           </div>

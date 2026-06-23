@@ -1,0 +1,342 @@
+import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import type { SOW, PurchaseOrder, Invoice, AuditLog } from "./types";
+
+function formatCurrency(n: number) {
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0 });
+}
+
+interface AddInvoiceInput {
+  sowId: string;
+  projectId: string;
+  skuName: string;
+  amount: number;
+  invoiceNumber: string;
+}
+
+interface ReclassifyInput {
+  sourcePoId: string;
+  sourceSkuName: string;
+  targetPoId: string;
+  targetSkuName: string;
+  amountToMove: number;
+}
+
+interface BillingState {
+  sows: SOW[];
+  purchaseOrders: PurchaseOrder[];
+  invoices: Invoice[];
+  auditLogs: AuditLog[];
+  addSOW: (clientName: string, sowName: string, projectIds: string[]) => void;
+  addPO: (sowId: string, poNumber: string) => void;
+  addSKUToPO: (poId: string, skuName: string, allocatedBudget: number) => void;
+  addInvoice: (input: AddInvoiceInput) => void;
+  reclassifyBudget: (input: ReclassifyInput) => void;
+}
+
+const BillingContext = createContext<BillingState | null>(null);
+
+const MOCK_SOWS: SOW[] = [
+  {
+    id: "SOW-REC-01",
+    name: "Reckitt Digital Transformation",
+    clientId: "CLIENT-REC",
+    clientName: "Reckitt",
+    projectIds: ["PROJ-REC-01", "PROJ-REC-02"],
+    status: "active",
+  },
+  {
+    id: "SOW-ACM-01",
+    name: "Acme Analytics Platform",
+    clientId: "CLIENT-ACM",
+    clientName: "Acme Corp",
+    projectIds: ["PROJ-ACM-01"],
+    status: "active",
+  },
+];
+
+const MOCK_POS: PurchaseOrder[] = [
+  // Two POs for SOW-REC-01 with identical "Data Eng" SKU — tests FIFO
+  {
+    id: "PO-REC-01",
+    poNumber: "PO-2025-1001",
+    sowId: "SOW-REC-01",
+    lineItems: [
+      { id: "LI-REC-01-A", skuName: "Data Eng", allocatedBudget: 10000, consumedBudget: 10000 }, // fully consumed — tests billing lock
+      { id: "LI-REC-01-B", skuName: "Cloud Infra", allocatedBudget: 8000, consumedBudget: 3200 },
+    ],
+    createdAt: "2025-01-15",
+  },
+  {
+    id: "PO-REC-02",
+    poNumber: "PO-2025-1042",
+    sowId: "SOW-REC-01",
+    lineItems: [
+      { id: "LI-REC-02-A", skuName: "Data Eng", allocatedBudget: 15000, consumedBudget: 4500 },
+      { id: "LI-REC-02-B", skuName: "QA Services", allocatedBudget: 5000, consumedBudget: 0 },
+    ],
+    createdAt: "2025-04-01",
+  },
+  {
+    id: "PO-ACM-01",
+    poNumber: "PO-2025-2001",
+    sowId: "SOW-ACM-01",
+    lineItems: [
+      { id: "LI-ACM-01-A", skuName: "ML Ops", allocatedBudget: 20000, consumedBudget: 7500 },
+    ],
+    createdAt: "2025-03-10",
+  },
+];
+
+const MOCK_INVOICES: Invoice[] = [
+  {
+    id: "INV-001",
+    invoiceNumber: "INV-2025-0001",
+    sowId: "SOW-REC-01",
+    projectId: "PROJ-REC-01",
+    skuName: "Data Eng",
+    amount: 5000,
+    date: "2025-02-28",
+  },
+  {
+    id: "INV-002",
+    invoiceNumber: "INV-2025-0002",
+    sowId: "SOW-REC-01",
+    projectId: "PROJ-REC-02",
+    skuName: "Cloud Infra",
+    amount: 3200,
+    date: "2025-03-15",
+  },
+];
+
+let nextInvoiceId = 3;
+let nextLineItemId = 1;
+let nextAuditId = 1;
+let nextSowId = 3;
+let nextPoId = 4;
+
+export function BillingProvider({ children }: { children: ReactNode }) {
+  const [sows, setSows] = useState<SOW[]>(MOCK_SOWS);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(MOCK_POS);
+  const [invoices, setInvoices] = useState<Invoice[]>(MOCK_INVOICES);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+
+  const appendAudit = useCallback((message: string) => {
+    setAuditLogs((prev) => [
+      ...prev,
+      {
+        id: `AUDIT-${String(nextAuditId++).padStart(3, "0")}`,
+        timestamp: new Date().toISOString(),
+        message,
+      },
+    ]);
+  }, []);
+
+  const addSOW = useCallback(
+    (clientName: string, sowName: string, projectIds: string[]) => {
+      const clientId = `CLIENT-${clientName.toUpperCase().replace(/\s+/g, "-").slice(0, 10)}`;
+      const id = `SOW-${String(nextSowId++).padStart(3, "0")}`;
+      setSows((prev) => [
+        ...prev,
+        { id, name: sowName, clientId, clientName, projectIds, status: "active" },
+      ]);
+      appendAudit(`Created SOW "${sowName}" (${id}) for ${clientName} with projects: ${projectIds.join(", ")}`);
+    },
+    [appendAudit],
+  );
+
+  const addPO = useCallback(
+    (sowId: string, poNumber: string) => {
+      const id = `PO-${String(nextPoId++).padStart(3, "0")}`;
+      setPurchaseOrders((prev) => [
+        ...prev,
+        { id, poNumber, sowId, lineItems: [], createdAt: new Date().toISOString().slice(0, 10) },
+      ]);
+      appendAudit(`Created PO "${poNumber}" (${id}) under ${sowId}`);
+    },
+    [appendAudit],
+  );
+
+  const addSKUToPO = useCallback(
+    (poId: string, skuName: string, allocatedBudget: number) => {
+      setPurchaseOrders((prev) =>
+        prev.map((po) => {
+          if (po.id !== poId) return po;
+          return {
+            ...po,
+            lineItems: [
+              ...po.lineItems,
+              {
+                id: `LI-GEN-${String(nextLineItemId++).padStart(3, "0")}`,
+                skuName,
+                allocatedBudget,
+                consumedBudget: 0,
+              },
+            ],
+          };
+        }),
+      );
+      appendAudit(`Added SKU "${skuName}" (${formatCurrency(allocatedBudget)}) to ${poId}`);
+    },
+    [appendAudit],
+  );
+
+  const addInvoice = useCallback(
+    ({ sowId, projectId, skuName, amount, invoiceNumber }: AddInvoiceInput) => {
+      // 1. Find all POs under this SOW that carry the requested SKU
+      const matchingPOs = purchaseOrders
+        .filter(
+          (po) =>
+            po.sowId === sowId &&
+            po.lineItems.some((li) => li.skuName === skuName),
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+
+      // 2. Aggregate capacity check
+      const totalAvailable = matchingPOs.reduce((sum, po) => {
+        const li = po.lineItems.find((li) => li.skuName === skuName)!;
+        return sum + (li.allocatedBudget - li.consumedBudget);
+      }, 0);
+
+      if (amount > totalAvailable) {
+        throw new Error(
+          `Invoice amount ($${amount}) exceeds total available budget ($${totalAvailable}) for SKU "${skuName}" under SOW "${sowId}"`,
+        );
+      }
+
+      // 3. FIFO allocation — build a map of consumed-budget increases per line item ID
+      const budgetIncreases = new Map<string, number>();
+      let remaining = amount;
+
+      for (const po of matchingPOs) {
+        if (remaining <= 0) break;
+
+        const li = po.lineItems.find((li) => li.skuName === skuName)!;
+        const available = li.allocatedBudget - li.consumedBudget;
+        if (available <= 0) continue;
+
+        const deduction = Math.min(available, remaining);
+        budgetIncreases.set(li.id, deduction);
+        remaining -= deduction;
+      }
+
+      // 4. Immutably update PO state
+      setPurchaseOrders((prev) =>
+        prev.map((po) => {
+          const increase = po.lineItems.some((li) => budgetIncreases.has(li.id));
+          if (!increase) return po;
+          return {
+            ...po,
+            lineItems: po.lineItems.map((li) => {
+              const delta = budgetIncreases.get(li.id);
+              if (delta === undefined) return li;
+              return { ...li, consumedBudget: li.consumedBudget + delta };
+            }),
+          };
+        }),
+      );
+
+      // 5. Append the new invoice
+      const id = `INV-${String(nextInvoiceId++).padStart(3, "0")}`;
+      const newInvoice: Invoice = {
+        id,
+        invoiceNumber,
+        sowId,
+        projectId,
+        skuName,
+        amount,
+        date: new Date().toISOString().slice(0, 10),
+      };
+      setInvoices((prev) => [...prev, newInvoice]);
+
+      // 6. Audit log
+      appendAudit(`Invoice ${invoiceNumber} recorded: ${formatCurrency(amount)} for SKU "${skuName}" under ${sowId} (FIFO allocated)`);
+    },
+    [purchaseOrders, appendAudit],
+  );
+
+  const reclassifyBudget = useCallback(
+    ({ sourcePoId, sourceSkuName, targetPoId, targetSkuName, amountToMove }: ReclassifyInput) => {
+      // 1. Validate source
+      const sourcePO = purchaseOrders.find((po) => po.id === sourcePoId);
+      if (!sourcePO) throw new Error(`Source PO "${sourcePoId}" not found`);
+
+      const sourceLI = sourcePO.lineItems.find((li) => li.skuName === sourceSkuName);
+      if (!sourceLI) throw new Error(`SKU "${sourceSkuName}" not found in PO "${sourcePoId}"`);
+
+      const availableSourceBalance = sourceLI.allocatedBudget - sourceLI.consumedBudget;
+      if (amountToMove > availableSourceBalance) {
+        throw new Error(
+          `Insufficient available balance in source SKU line item to perform reclassification. ` +
+          `Requested: $${amountToMove}, Available: $${availableSourceBalance}`,
+        );
+      }
+
+      // 2. Validate target PO exists
+      const targetPO = purchaseOrders.find((po) => po.id === targetPoId);
+      if (!targetPO) throw new Error(`Target PO "${targetPoId}" not found`);
+
+      // 3. Immutably update POs
+      setPurchaseOrders((prev) =>
+        prev.map((po) => {
+          if (po.id === sourcePoId) {
+            return {
+              ...po,
+              lineItems: po.lineItems.map((li) =>
+                li.id === sourceLI.id
+                  ? { ...li, allocatedBudget: li.allocatedBudget - amountToMove }
+                  : li,
+              ),
+            };
+          }
+
+          if (po.id === targetPoId) {
+            const existingLI = po.lineItems.find((li) => li.skuName === targetSkuName);
+            if (existingLI) {
+              return {
+                ...po,
+                lineItems: po.lineItems.map((li) =>
+                  li.id === existingLI.id
+                    ? { ...li, allocatedBudget: li.allocatedBudget + amountToMove }
+                    : li,
+                ),
+              };
+            }
+            return {
+              ...po,
+              lineItems: [
+                ...po.lineItems,
+                {
+                  id: `LI-GEN-${String(nextLineItemId++).padStart(3, "0")}`,
+                  skuName: targetSkuName,
+                  allocatedBudget: amountToMove,
+                  consumedBudget: 0,
+                },
+              ],
+            };
+          }
+
+          return po;
+        }),
+      );
+
+      // 4. Audit log
+      appendAudit(`Shifted $${amountToMove} from ${sourcePoId} (${sourceSkuName}) to ${targetPoId} (${targetSkuName})`);
+    },
+    [purchaseOrders, appendAudit],
+  );
+
+  return (
+    <BillingContext.Provider value={{ sows, purchaseOrders, invoices, auditLogs, addSOW, addPO, addSKUToPO, addInvoice, reclassifyBudget }}>
+      {children}
+    </BillingContext.Provider>
+  );
+}
+
+export function useBilling() {
+  const ctx = useContext(BillingContext);
+  if (!ctx) throw new Error("useBilling must be used within BillingProvider");
+  return ctx;
+}

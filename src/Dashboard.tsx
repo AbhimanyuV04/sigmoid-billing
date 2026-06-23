@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useBilling } from "./BillingContext";
+import type { FIFOStep } from "./BillingContext";
 import type { PurchaseOrder } from "./types";
 
 type View = "explorer" | "creator" | "invoicing" | "reclassify" | "reports" | "audit";
@@ -22,6 +23,7 @@ function formatTimestamp(iso: string) {
 const INPUT = "w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none";
 const BTN_PRIMARY = "w-full bg-indigo-600 text-white text-sm font-medium py-2.5 rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors";
 const BTN_AMBER = "w-full bg-amber-600 text-white text-sm font-medium py-2.5 rounded-md hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors";
+const BTN_DANGER_SM = "text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded transition-colors";
 
 function StatusBanner({ message }: { message: { type: "success" | "error"; text: string } }) {
   return (
@@ -34,15 +36,17 @@ function StatusBanner({ message }: { message: { type: "success" | "error"; text:
 // ─── View 1: Explorer ─────────────────────────────────────────────────
 
 function ExplorerView() {
-  const { sows, purchaseOrders } = useBilling();
+  const { sows, purchaseOrders, deleteSOW, deletePO } = useBilling();
   const [expandedSow, setExpandedSow] = useState<string | null>(sows[0]?.id ?? null);
   const [expandedPo, setExpandedPo] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-bold text-gray-900">Explorer Desk</h2>
         <p className="text-sm text-gray-500 mt-1">Interactive SOW / PO tree with real-time budget progress.</p>
+        {message && <div className="mt-2"><StatusBanner message={message} /></div>}
       </div>
       {sows.map((sow) => {
         const isOpen = expandedSow === sow.id;
@@ -62,6 +66,11 @@ function ExplorerView() {
                 {sow.projectIds.map((pid) => (
                   <span key={pid} className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-mono">{pid}</span>
                 ))}
+                <button
+                  onClick={(e) => { e.stopPropagation(); try { deleteSOW(sow.id); setMessage({ type: "success", text: `Deleted SOW "${sow.name}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
+                  className={BTN_DANGER_SM}
+                  title="Delete SOW"
+                >Delete</button>
                 <svg className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
@@ -86,6 +95,11 @@ function ExplorerView() {
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-400">{po.createdAt}</span>
                           <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{po.lineItems.length} SKU{po.lineItems.length !== 1 ? "s" : ""}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); try { deletePO(po.id); setMessage({ type: "success", text: `Deleted PO "${po.poNumber}".` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }}
+                            className={BTN_DANGER_SM}
+                            title="Delete PO"
+                          >Delete</button>
                         </div>
                       </button>
                       {poOpen && (
@@ -273,7 +287,7 @@ function EntityCreatorView() {
 // ─── View 3: Invoicing Terminal ───────────────────────────────────────
 
 function InvoicingView() {
-  const { sows, purchaseOrders, invoices, addInvoice } = useBilling();
+  const { sows, purchaseOrders, invoices, addInvoice, previewFIFO, voidInvoice } = useBilling();
 
   const [sowId, setSowId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -302,6 +316,12 @@ function InvoicingView() {
   }, [sowId, skuName, purchaseOrders]);
 
   const maxAmount = Math.max(aggregateRemaining ?? 0, 0);
+
+  const fifoPreview: FIFOStep[] = useMemo(() => {
+    const amt = Number(amount);
+    if (!sowId || !skuName || !amt || amt <= 0) return [];
+    return previewFIFO(sowId, skuName, amt);
+  }, [sowId, skuName, amount, previewFIFO]);
 
   const recentInvoices = useMemo(() => [...invoices].reverse().slice(0, 8), [invoices]);
 
@@ -363,6 +383,23 @@ function InvoicingView() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Amount</label>
               <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} min={1} max={maxAmount} placeholder="0" className={INPUT} required disabled={maxAmount <= 0 && skuName !== ""} />
             </div>
+            {fifoPreview.length > 0 && (
+              <div className="border border-indigo-200 bg-indigo-50/50 rounded-lg p-3 space-y-2">
+                <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">FIFO Allocation Preview</p>
+                {fifoPreview.map((step, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-bold flex items-center justify-center">{i + 1}</span>
+                      <span className="font-mono text-gray-700">{step.poNumber}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-mono text-indigo-700">{formatCurrency(step.deduction)}</span>
+                      <span className="text-xs text-gray-400 ml-2">({formatCurrency(step.remainingAfter)} left)</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <button type="submit" disabled={maxAmount <= 0 && skuName !== ""} className={BTN_PRIMARY}>Submit Invoice</button>
             {message && <StatusBanner message={message} />}
           </form>
@@ -383,7 +420,8 @@ function InvoicingView() {
                     <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500 uppercase">Project</th>
                     <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500 uppercase">SKU</th>
                     <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 uppercase">Amount</th>
-                    <th className="text-right py-2 pl-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                    <th className="text-right py-2 pl-3 text-xs font-semibold text-gray-500 uppercase"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -394,7 +432,10 @@ function InvoicingView() {
                       <td className="py-2.5 px-3 text-gray-600 font-mono text-xs">{inv.projectId}</td>
                       <td className="py-2.5 px-3 text-gray-700">{inv.skuName}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-emerald-600">{formatCurrency(inv.amount)}</td>
-                      <td className="py-2.5 pl-3 text-right text-gray-400 text-xs">{inv.date}</td>
+                      <td className="py-2.5 px-3 text-right text-gray-400 text-xs">{inv.date}</td>
+                      <td className="py-2.5 pl-3 text-right">
+                        <button onClick={() => { try { voidInvoice(inv.id); setMessage({ type: "success", text: `Voided ${inv.invoiceNumber} — budget returned.` }); } catch (err) { setMessage({ type: "error", text: (err as Error).message }); } }} className={BTN_DANGER_SM}>Void</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

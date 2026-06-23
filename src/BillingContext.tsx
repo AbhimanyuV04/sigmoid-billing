@@ -21,6 +21,14 @@ interface ReclassifyInput {
   amountToMove: number;
 }
 
+export interface FIFOStep {
+  poId: string;
+  poNumber: string;
+  lineItemId: string;
+  deduction: number;
+  remainingAfter: number;
+}
+
 interface BillingState {
   sows: SOW[];
   purchaseOrders: PurchaseOrder[];
@@ -31,6 +39,10 @@ interface BillingState {
   addSKUToPO: (poId: string, skuName: string, allocatedBudget: number) => void;
   addInvoice: (input: AddInvoiceInput) => void;
   reclassifyBudget: (input: ReclassifyInput) => void;
+  previewFIFO: (sowId: string, skuName: string, amount: number) => FIFOStep[];
+  deleteSOW: (sowId: string) => void;
+  deletePO: (poId: string) => void;
+  voidInvoice: (invoiceId: string) => void;
 }
 
 const BillingContext = createContext<BillingState | null>(null);
@@ -363,8 +375,106 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     [purchaseOrders, appendAudit],
   );
 
+  const previewFIFO = useCallback(
+    (sowId: string, skuName: string, amount: number): FIFOStep[] => {
+      const matchingPOs = purchaseOrders
+        .filter((po) => po.sowId === sowId && po.lineItems.some((li) => li.skuName === skuName))
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      const steps: FIFOStep[] = [];
+      let remaining = amount;
+
+      for (const po of matchingPOs) {
+        if (remaining <= 0) break;
+        const li = po.lineItems.find((li) => li.skuName === skuName)!;
+        const available = li.allocatedBudget - li.consumedBudget;
+        if (available <= 0) continue;
+        const deduction = Math.min(available, remaining);
+        steps.push({
+          poId: po.id,
+          poNumber: po.poNumber,
+          lineItemId: li.id,
+          deduction,
+          remainingAfter: available - deduction,
+        });
+        remaining -= deduction;
+      }
+      return steps;
+    },
+    [purchaseOrders],
+  );
+
+  const deleteSOW = useCallback(
+    (sowId: string) => {
+      const sow = sows.find((s) => s.id === sowId);
+      if (!sow) return;
+      const linkedPOs = purchaseOrders.filter((po) => po.sowId === sowId);
+      const hasConsumed = linkedPOs.some((po) => po.lineItems.some((li) => li.consumedBudget > 0));
+      if (hasConsumed) throw new Error(`Cannot delete SOW "${sowId}" — it has POs with consumed budget. Void related invoices first.`);
+      setSows((prev) => prev.filter((s) => s.id !== sowId));
+      setPurchaseOrders((prev) => prev.filter((po) => po.sowId !== sowId));
+      setInvoices((prev) => prev.filter((inv) => inv.sowId !== sowId));
+      appendAudit(`Deleted SOW "${sow.name}" (${sowId}) and ${linkedPOs.length} linked PO(s)`);
+    },
+    [sows, purchaseOrders, appendAudit],
+  );
+
+  const deletePO = useCallback(
+    (poId: string) => {
+      const po = purchaseOrders.find((p) => p.id === poId);
+      if (!po) return;
+      const hasConsumed = po.lineItems.some((li) => li.consumedBudget > 0);
+      if (hasConsumed) throw new Error(`Cannot delete PO "${poId}" — it has consumed budget. Void related invoices first.`);
+      setPurchaseOrders((prev) => prev.filter((p) => p.id !== poId));
+      appendAudit(`Deleted PO "${po.poNumber}" (${poId})`);
+    },
+    [purchaseOrders, appendAudit],
+  );
+
+  const voidInvoice = useCallback(
+    (invoiceId: string) => {
+      const invoice = invoices.find((inv) => inv.id === invoiceId);
+      if (!invoice) throw new Error(`Invoice "${invoiceId}" not found`);
+
+      // Reverse the FIFO consumption — walk POs newest-first and return budget
+      const matchingPOs = purchaseOrders
+        .filter((po) => po.sowId === invoice.sowId && po.lineItems.some((li) => li.skuName === invoice.skuName))
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      const decreases = new Map<string, number>();
+      let remaining = invoice.amount;
+
+      for (const po of matchingPOs) {
+        if (remaining <= 0) break;
+        const li = po.lineItems.find((li) => li.skuName === invoice.skuName)!;
+        const canReturn = Math.min(li.consumedBudget, remaining);
+        if (canReturn <= 0) continue;
+        decreases.set(li.id, canReturn);
+        remaining -= canReturn;
+      }
+
+      setPurchaseOrders((prev) =>
+        prev.map((po) => {
+          if (!po.lineItems.some((li) => decreases.has(li.id))) return po;
+          return {
+            ...po,
+            lineItems: po.lineItems.map((li) => {
+              const delta = decreases.get(li.id);
+              if (delta === undefined) return li;
+              return { ...li, consumedBudget: li.consumedBudget - delta };
+            }),
+          };
+        }),
+      );
+
+      setInvoices((prev) => prev.filter((inv) => inv.id !== invoiceId));
+      appendAudit(`Voided invoice ${invoice.invoiceNumber} (${formatCurrency(invoice.amount)}) — FIFO consumption reversed for SKU "${invoice.skuName}" under ${invoice.sowId}`);
+    },
+    [invoices, purchaseOrders, appendAudit],
+  );
+
   return (
-    <BillingContext.Provider value={{ sows, purchaseOrders, invoices, auditLogs, addSOW, addPO, addSKUToPO, addInvoice, reclassifyBudget }}>
+    <BillingContext.Provider value={{ sows, purchaseOrders, invoices, auditLogs, addSOW, addPO, addSKUToPO, addInvoice, reclassifyBudget, previewFIFO, deleteSOW, deletePO, voidInvoice }}>
       {children}
     </BillingContext.Provider>
   );

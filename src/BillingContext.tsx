@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
 import type { SOW, PurchaseOrder, Invoice, AuditLog } from "./types";
 
 function formatCurrency(n: number) {
@@ -108,17 +108,52 @@ const MOCK_INVOICES: Invoice[] = [
   },
 ];
 
-let nextInvoiceId = 3;
-let nextLineItemId = 1;
-let nextAuditId = 1;
-let nextSowId = 3;
-let nextPoId = 4;
+const STORAGE_KEY = "sigmoid-billing-state";
+
+interface PersistedState {
+  sows: SOW[];
+  purchaseOrders: PurchaseOrder[];
+  invoices: Invoice[];
+  auditLogs: AuditLog[];
+  counters: { invoice: number; lineItem: number; audit: number; sow: number; po: number };
+}
+
+function loadState(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: PersistedState) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+const saved = loadState();
+
+let nextInvoiceId = saved?.counters.invoice ?? 3;
+let nextLineItemId = saved?.counters.lineItem ?? 1;
+let nextAuditId = saved?.counters.audit ?? 1;
+let nextSowId = saved?.counters.sow ?? 3;
+let nextPoId = saved?.counters.po ?? 4;
 
 export function BillingProvider({ children }: { children: ReactNode }) {
-  const [sows, setSows] = useState<SOW[]>(MOCK_SOWS);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(MOCK_POS);
-  const [invoices, setInvoices] = useState<Invoice[]>(MOCK_INVOICES);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [sows, setSows] = useState<SOW[]>(saved?.sows ?? MOCK_SOWS);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(saved?.purchaseOrders ?? MOCK_POS);
+  const [invoices, setInvoices] = useState<Invoice[]>(saved?.invoices ?? MOCK_INVOICES);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(saved?.auditLogs ?? []);
+
+  useEffect(() => {
+    saveState({
+      sows,
+      purchaseOrders,
+      invoices,
+      auditLogs,
+      counters: { invoice: nextInvoiceId, lineItem: nextLineItemId, audit: nextAuditId, sow: nextSowId, po: nextPoId },
+    });
+  }, [sows, purchaseOrders, invoices, auditLogs]);
 
   const appendAudit = useCallback((message: string) => {
     setAuditLogs((prev) => [
